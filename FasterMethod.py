@@ -73,13 +73,21 @@ def append_records(records, csv_filename):
 async def safe_get(page, url, retries=3, delay=5):
     for attempt in range(retries):
         try:
+            logging.info(f"Navigating to {url} (attempt {attempt+1})")
             await page.goto(url, timeout=PAGE_LOAD_TIMEOUT)
+            logging.info(f"Successfully loaded {url}")
             return True
         except Exception as e:
             logging.warning(f"Attempt {attempt+1} to load {url} failed: {e}")
             if attempt < retries - 1:
                 await asyncio.sleep(delay)
             else:
+                screenshot_path = f"screenshot_timeout_{int(time.time())}.png"
+                try:
+                    await page.screenshot(path=screenshot_path)
+                    logging.info(f"Saved screenshot to {screenshot_path} for URL: {url}")
+                except Exception as ss_e:
+                    logging.error(f"Failed to take screenshot for URL {url}: {ss_e}")
                 logging.error(f"Maximum retries reached for URL: {url}")
                 return False
 
