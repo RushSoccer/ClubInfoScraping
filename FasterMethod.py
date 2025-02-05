@@ -10,8 +10,8 @@ CSV_FILENAME = None
 
 # Constants
 FIELDNAMES = ["team", "state", "detail_url", "club_name", "club_website"]
-PAGE_LOAD_TIMEOUT = 30000  # 30 seconds
-CONCURRENCY_LIMIT = 50     # Increase to 50 concurrent detail page tasks
+PAGE_LOAD_TIMEOUT = 60000  # Increased timeout: 60 seconds
+CONCURRENCY_LIMIT = 7     # Limit of 50 concurrent detail page tasks
 BATCH_SIZE = 500           # Checkpoint after processing 500 clubs
 
 # ---------------------------
@@ -30,12 +30,16 @@ def append_records(records):
             csvfile.flush()
 
 # ---------------------------
-# Helper: safe_get (with retries)
+# Helper: safe_get (with retries and network idle wait)
 # ---------------------------
-async def safe_get(page, url, retries=3, delay=5):
+async def safe_get(page, url, retries=5, delay=5):
     for attempt in range(retries):
         try:
+            print(f"Loading URL: {url} (attempt {attempt+1})")
             await page.goto(url, timeout=PAGE_LOAD_TIMEOUT)
+            # Wait until the network is idle (ensuring dynamic content loads)
+            await page.wait_for_load_state("networkidle", timeout=PAGE_LOAD_TIMEOUT)
+            print(f"Successfully loaded: {url}")
             return True
         except Exception as e:
             print(f"Attempt {attempt+1} to load {url} failed: {e}")
@@ -256,7 +260,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 
 
 # import asyncio
