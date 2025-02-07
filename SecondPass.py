@@ -2,49 +2,66 @@
 import asyncio
 import argparse
 import csv
+import os
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
-
-# Global variables that will be set via command-line arguments
-START_URL = None
-CSV_FILENAME = None
 
 # Constants
 FIELDNAMES = ["team", "state", "detail_url", "club_name", "club_website"]
 PAGE_LOAD_TIMEOUT = 60000  # 60 seconds
-CONCURRENCY_LIMIT = 50     # Concurrency limit (you may lower this for accuracy)
-BATCH_SIZE = 500           # Checkpoint after processing 500 clubs
-RETRIES = 5                # Number of retries for loading a page
-RETRY_DELAY = 5            # Delay (in seconds) between retries
+CONCURRENCY_LIMIT = 10     # Lower concurrency for accuracy
+BATCH_SIZE = 500           # Checkpoint after processing 500 rows
+RETRIES = 5
+RETRY_DELAY = 5
 
 # ---------------------------
 # CSV Helper Functions
 # ---------------------------
-def read_input_csv(input_file):
+def read_csv_file(filename):
     rows = []
-    with open(input_file, newline="", encoding="utf-8") as csvfile:
-        reader = csv.DictReader(csvfile, fieldnames=FIELDNAMES)
-        # Optionally, skip the header if present:
-        header = next(reader)
-        # If the header does not match, you might need to re-read including the header.
+    with open(filename, newline="", encoding="utf-8") as csvfile:
+        reader = csv.DictReader(csvfile)
         for row in reader:
             rows.append(row)
     return rows
 
-def write_output_csv(output_file, rows):
-    with open(output_file, "w", newline="", encoding="utf-8") as csvfile:
+def write_csv_file(filename, rows):
+    with open(filename, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=FIELDNAMES)
         writer.writeheader()
         writer.writerows(rows)
 
+def load_checkpoint(checkpoint_file):
+    checkpoint_data = {}
+    if os.path.exists(checkpoint_file):
+        rows = read_csv_file(checkpoint_file)
+        for row in rows:
+            detail_url = row.get("detail_url", "").strip()
+            if detail_url:
+                checkpoint_data[detail_url] = row
+    return checkpoint_data
+
+def merge_results(input_rows, checkpoint_data, new_results):
+    # Build a lookup dictionary from the new results (using detail_url as key)
+    new_results_dict = {row.get("detail_url", "").strip(): row for row in new_results if row.get("detail_url")}
+    final_results = []
+    for row in input_rows:
+        detail_url = row.get("detail_url", "").strip()
+        if detail_url in checkpoint_data:
+            final_results.append(checkpoint_data[detail_url])
+        elif detail_url in new_results_dict:
+            final_results.append(new_results_dict[detail_url])
+        else:
+            final_results.append(row)
+    return final_results
+
 # ---------------------------
-# Helper: safe_get with retries and networkidle wait
+# Helper: safe_get with retries and waiting for network idle
 # ---------------------------
 async def safe_get(page, url, retries=RETRIES, delay=RETRY_DELAY):
     for attempt in range(retries):
         try:
             print(f"Loading URL: {url} (attempt {attempt+1})")
             await page.goto(url, timeout=PAGE_LOAD_TIMEOUT)
-            # Wait until the network is idle so that dynamic content loads
             await page.wait_for_load_state("networkidle", timeout=PAGE_LOAD_TIMEOUT)
             print(f"Successfully loaded: {url}")
             return True
@@ -60,14 +77,10 @@ async def safe_get(page, url, retries=RETRIES, delay=RETRY_DELAY):
 # Detail Extraction Function
 # ---------------------------
 async def extract_missing_fields(page, row):
-    """
-    If club_name is missing, scrape it.
-    If club_website is missing, scrape it.
-    """
+    # Retrieve current values
     club_name = row.get("club_name", "").strip()
     club_website = row.get("club_website", "").strip()
     
-    # If club_name is missing, extract it
     if not club_name:
         try:
             await page.wait_for_selector("//div[span[text()='Club Information']]", timeout=PAGE_LOAD_TIMEOUT)
@@ -78,7 +91,6 @@ async def extract_missing_fields(page, row):
         except Exception as e:
             print("Could not extract club name:", e)
     
-    # If club_website is missing, extract it
     if not club_website:
         try:
             club_website_elem = await page.wait_for_selector("//span[text()='Website']/following-sibling::span//a", timeout=5000)
@@ -94,20 +106,16 @@ async def extract_missing_fields(page, row):
 # Process a Single Row
 # ---------------------------
 async def process_row(row, browser):
-    """
-    Processes one CSV row by opening the detail_url and scraping any missing fields.
-    Returns the updated row.
-    """
-    # If both club_name and club_website are present, skip processing.
+    # If both fields are present, skip processing this row.
     if row.get("club_name", "").strip() and row.get("club_website", "").strip():
         print(f"Skipping {row['team']} as both club name and website are present.")
         return row
 
     context = await browser.new_context()
     page = await context.new_page()
-    url = row.get("detail_url")
+    url = row.get("detail_url", "").strip()
     if not url:
-        print(f"No detail URL for team: {row.get('team')}")
+        print("No detail URL for team:", row.get("team"))
         await context.close()
         return row
 
@@ -137,18 +145,17 @@ async def process_all_rows(rows):
         
         total = len(rows)
         updated_rows = []
-        batch_size = BATCH_SIZE if BATCH_SIZE > 0 else total
-        for i in range(0, total, batch_size):
-            batch = rows[i:i+batch_size]
-            print(f"\nProcessing batch {i // batch_size + 1} (rows {i+1} to {i+len(batch)})...")
+        for i in range(0, total, BATCH_SIZE):
+            batch = rows[i:i+BATCH_SIZE]
+            print(f"\nProcessing batch {i // BATCH_SIZE + 1} (rows {i+1} to {i+len(batch)})...")
             try:
                 batch_results = await asyncio.gather(*(process_with_semaphore(row) for row in batch))
             except Exception as e:
                 print("Exception during batch processing:", e)
                 batch_results = []
             updated_rows.extend(batch_results)
-            # Write a checkpoint file after each batch
-            write_output_csv("SecondPassOutput_checkpoint.csv", updated_rows)
+            # Write checkpoint after each batch
+            write_csv_file("SecondPassOutput_checkpoint.csv", updated_rows)
             print(f"Checkpoint: Processed {len(batch_results)} rows.")
         await browser.close()
     return updated_rows
@@ -158,18 +165,8 @@ async def process_all_rows(rows):
 # ---------------------------
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Second Pass: Fill in missing club info")
-    parser.add_argument(
-        "--input",
-        type=str,
-        required=True,
-        help="Input CSV file with columns: team, state, detail_url, club_name, club_website"
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        required=True,
-        help="Output CSV file to write updated data"
-    )
+    parser.add_argument("--input", type=str, required=True, help="Input CSV file")
+    parser.add_argument("--output", type=str, required=True, help="Output CSV file for updated data")
     return parser.parse_args()
 
 # ---------------------------
@@ -177,10 +174,21 @@ def parse_arguments():
 # ---------------------------
 async def main():
     args = parse_arguments()
-    rows = read_input_csv(args.input)
-    print(f"Read {len(rows)} rows from {args.input}")
-    updated_rows = await process_all_rows(rows)
-    write_output_csv(args.output, updated_rows)
+    input_rows = read_csv_file(args.input)
+    print(f"Read {len(input_rows)} rows from {args.input}")
+    
+    checkpoint_file = "SecondPassOutput_checkpoint.csv"
+    checkpoint_data = load_checkpoint(checkpoint_file)
+    
+    # Filter rows that are missing either club_name or club_website.
+    rows_to_process = [row for row in input_rows if not (row.get("club_name", "").strip() and row.get("club_website", "").strip())]
+    print(f"{len(rows_to_process)} rows remain to be processed after checkpoint filtering.")
+    
+    new_results = await process_all_rows(rows_to_process)
+    
+    # Merge checkpoint data and newly processed results with the original input rows.
+    final_results = merge_results(input_rows, checkpoint_data, new_results)
+    write_csv_file(args.output, final_results)
     print(f"Second pass complete. Updated data written to {args.output}")
 
 if __name__ == "__main__":
