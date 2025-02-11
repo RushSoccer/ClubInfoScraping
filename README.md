@@ -60,3 +60,15 @@ For optimal performance and to avoid long run times on underpowered hardware, it
    cd ~/ClubInfoScraping
    git pull origin master
     ```
+
+2.  **Run the Script in a Persistent Terminal Session:**  
+  It is highly recommended to use a terminal multiplexer such as `tmux` so that your process continues running even if your SSH session disconnects:
+
+3. **Execute the Script:**  
+Run the script by specifying the input and output CSV files:
+
+4. 
+- **To Resume if the Process Fails:**  
+The script automatically writes checkpoints. If it fails before completing, simply re-run the same command. The script will load the checkpoint file (`SecondPassOutput_checkpoint.csv`) and only process rows that are missing data.
+
+
