@@ -75,3 +75,58 @@ Run the script by specifying the input and output CSV files:
 The script automatically writes checkpoints. If it fails before completing, simply re-run the same command. The script will load the checkpoint file (`SecondPassOutput_checkpoint.csv`) and only process rows that are missing data.
 
 
+
+# How to Execute the Code with a VM
+
+- **Place the Code on Your VM:**  
+  Save the code above into a file named `SecondPass.py` in your project directory (e.g., `~/ClubInfoScraping`).
+
+- **Ensure All Dependencies Are Installed:**  
+
+  - **Install Python dependencies (if not already installed):**
+    ```bash
+    pip3 install playwright numpy
+    ```
+
+  - **Install browser dependencies:**
+    ```bash
+    sudo playwright install-deps
+    ```
+
+  - **Install Chromium (if not already done):**
+    ```bash
+    playwright install chromium
+    ```
+
+- **Run the Script in a tmux Session:**  
+
+  - **Start a new tmux session:**
+    ```bash
+    tmux new -s secondpass
+    ```
+
+  - **Run the script with your input and output files:**
+    ```bash
+    python3 SecondPass.py --input ClubInfo-SecondPass.csv --output SecondPassOutput.csv
+    ```
+
+  - **To detach from the tmux session, press `Ctrl+B` then `D`.**
+
+- **Resuming After a Failure:**  
+
+  If the process fails, the checkpoint file (`SecondPassOutput_checkpoint.csv`) will have the progress so far. Simply run the same command again to resume processing:
+  ```bash
+  python3 SecondPass.py --input ClubInfo-SecondPass.csv --output SecondPassOutput.csv
+  ```
+
+## Additional Notes
+
+- **Performance vs. Accuracy:**  
+  This version of the code prioritizes accuracy over speed by using longer timeouts, more retries, and lower concurrency (10 concurrent detail page tasks). If you are running on a VM with ample resources, you might experiment with increasing `CONCURRENCY_LIMIT` for faster results—but be aware that this could lower accuracy if pages do not fully load.
+
+- **Compute Power Recommendation:**  
+  Running this process on a dedicated VM (or multiple VMs for parallel processing) is recommended because the script can be resource-intensive. More compute power (such as a higher‑spec VM) can help reduce timeouts and improve reliability.
+
+- **Second Pass CSV:**  
+  This script is designed as a "second pass" process. It uses an input CSV (which you may have generated from a previous run) and updates any missing data. The checkpoint file helps resume processing, so you do not lose progress if the process is interrupted.
+
